@@ -1,5 +1,5 @@
-// Service worker: app-shell caching zodat de app offline werkt.
-const CACHE = "gym-tracker-v4";
+// Service worker — "netwerk eerst": online altijd de nieuwste versie, offline uit cache.
+const CACHE = "gym-tracker-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -19,15 +19,20 @@ self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Cache-first voor app-bestanden; netwerk als fallback.
+// Netwerk eerst: haal vers op, ververs de cache, en val bij offline terug op cache.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   e.respondWith(
-    caches.match(e.request).then((cached) => cached || fetch(e.request))
+    fetch(e.request)
+      .then((resp) => {
+        const copy = resp.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        return resp;
+      })
+      .catch(() => caches.match(e.request).then((cached) => cached || caches.match("./index.html")))
   );
 });
