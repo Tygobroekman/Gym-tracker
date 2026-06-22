@@ -4,30 +4,29 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
   <title>Gym Tracker</title>
-  <meta name="theme-color" content="#0f1117" />
+  <meta name="theme-color" content="#f9f9f9" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Gym" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <header class="app-header">
-    <h1 id="view-title">Sessie</h1>
-    <div id="header-action"></div>
+    <div class="nav-row">
+      <div id="hdr-left"></div>
+      <div class="spacer"></div>
+      <div id="hdr-right"></div>
+    </div>
+    <h1 class="large-title" id="view-title">Home</h1>
   </header>
 
   <main id="view"></main>
 
-  <nav class="tabbar">
-    <button class="tab" data-view="session"><span class="ico">🏋️</span><span>Sessie</span></button>
-    <button class="tab" data-view="library"><span class="ico">📚</span><span>Oefeningen</span></button>
-    <button class="tab" data-view="body"><span class="ico">📊</span><span>Lichaam</span></button>
-    <button class="tab" data-view="history"><span class="ico">🗓️</span><span>Historie</span></button>
-  </nav>
+  <nav class="tabbar" id="tabbar"></nav>
 
-  <!-- Modal-host -->
   <div id="modal-root"></div>
 
   <script src="./app.js"></script>
