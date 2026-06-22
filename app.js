@@ -2,9 +2,10 @@
 
 /* ===================== Opslag ===================== */
 const KEY = "gym-tracker-db-v1";
-const DEFAULT_MUSCLES = ["Borst", "Rug", "Benen", "Schouders", "Armen", "Core", "Cardio"];
+const DEFAULT_MUSCLES = ["Borst", "Rug", "Schouders", "Biceps", "Triceps", "Buik", "Quadriceps", "Hamstrings", "Billen", "Kuiten"];
 
 const DEFAULT_DB = {
+  musclesV2: true,
   muscles: [...DEFAULT_MUSCLES],
   exercises: [
     { id: "ex_bench", name: "Bench press", muscle: "Borst", notes: "" },
@@ -32,6 +33,11 @@ function load() {
 }
 function migrate(d) {
   if (!Array.isArray(d.muscles) || !d.muscles.length) d.muscles = [...DEFAULT_MUSCLES];
+  // Eenmalig de nieuwe, specifiekere spiergroepen toevoegen (zonder bestaande te wissen).
+  if (!d.musclesV2) {
+    DEFAULT_MUSCLES.forEach((m) => { if (!d.muscles.includes(m)) d.muscles.push(m); });
+    d.musclesV2 = true;
+  }
   (d.exercises || []).forEach((ex) => {
     if (ex.muscle && !d.muscles.includes(ex.muscle)) d.muscles.push(ex.muscle);
   });
@@ -134,15 +140,21 @@ function orderedMuscleKeys(presentKeys) {
   return keys;
 }
 
-// Map een spiergroep-naam naar een regio op het lichaam-figuur.
+// Map een spiergroep-naam naar een regio op het lichaam-figuur (specifiek vóór generiek).
 function muscleToRegion(name) {
   const n = (name || "").toLowerCase();
   if (/borst|chest|pec/.test(n)) return "chest";
+  if (/bicep/.test(n)) return "biceps";
+  if (/tricep/.test(n)) return "triceps";
   if (/schouder|delt|shoulder/.test(n)) return "shoulders";
-  if (/arm|bicep|tricep|forearm/.test(n)) return "arms";
-  if (/core|buik|abs|ab|romp/.test(n)) return "abs";
-  if (/be+n|leg|quad|bil|ham|glut|kuit|calf|dij/.test(n)) return "legs";
-  if (/rug|back|lat|trap/.test(n)) return "back";
+  if (/rug|lat|trap|back/.test(n)) return "back";
+  if (/buik|abs|core|romp/.test(n)) return "abs";
+  if (/quad|bovenbeen/.test(n)) return "quads";
+  if (/hamstring|achterbeen/.test(n)) return "hamstrings";
+  if (/bil|glut/.test(n)) return "glutes";
+  if (/kuit|calf|calv/.test(n)) return "calves";
+  if (/arm/.test(n)) return "biceps";          // generieke "Armen"
+  if (/be+n|leg|dij/.test(n)) return "quads";   // generieke "Benen"
   return null;
 }
 
@@ -162,40 +174,65 @@ const ICON = {
 function iconBtn(act, id = "") { return `<button class="icon-btn" data-act="${act}"${id ? ` data-id="${id}"` : ""}>${ICON.add}</button>`; }
 function textAction(act, label, id = "") { return `<button class="title-action" data-act="${act}"${id ? ` data-id="${id}"` : ""}>${label}</button>`; }
 
-/* ===================== Lichaam-figuur (getrainde spieren) ===================== */
+/* ===================== Lichaam-figuur: voor- + achterkant ===================== */
 function bodyMapSVG(trained) {
   const c = (r) => (trained.has(r) ? "var(--accent)" : "var(--bodymap-off)");
   const skin = "var(--bodymap-skin)";
-  const st = `stroke="var(--separator)" stroke-width="1"`;
-  return `<svg viewBox="0 0 200 330" class="bodymap" aria-hidden="true">
-    <circle cx="100" cy="30" r="18" fill="${skin}" ${st}/>
-    <rect x="91" y="44" width="18" height="14" rx="5" fill="${skin}" ${st}/>
-    <!-- traps / rug (bovenrug) -->
-    <path d="M80 56 Q100 48 120 56 L114 74 Q100 67 86 74 Z" fill="${c("back")}" ${st}/>
-    <!-- schouders -->
-    <ellipse cx="63" cy="80" rx="18" ry="15" fill="${c("shoulders")}" ${st}/>
-    <ellipse cx="137" cy="80" rx="18" ry="15" fill="${c("shoulders")}" ${st}/>
-    <!-- borst -->
-    <rect x="76" y="80" width="23" height="27" rx="11" fill="${c("chest")}" ${st}/>
-    <rect x="101" y="80" width="23" height="27" rx="11" fill="${c("chest")}" ${st}/>
-    <!-- armen: bovenarm + onderarm -->
-    <rect x="44" y="94" width="16" height="44" rx="8" fill="${c("arms")}" ${st}/>
-    <rect x="140" y="94" width="16" height="44" rx="8" fill="${c("arms")}" ${st}/>
-    <rect x="40" y="140" width="14" height="40" rx="7" fill="${c("arms")}" ${st}/>
-    <rect x="146" y="140" width="14" height="40" rx="7" fill="${c("arms")}" ${st}/>
-    <!-- lats (zijkant rug) -->
-    <path d="M74 112 L84 116 L84 150 L72 142 Z" fill="${c("back")}" ${st}/>
-    <path d="M126 112 L116 116 L116 150 L128 142 Z" fill="${c("back")}" ${st}/>
-    <!-- core / buik -->
-    <rect x="84" y="110" width="32" height="64" rx="11" fill="${c("abs")}" ${st}/>
-    <!-- bekken -->
-    <path d="M83 173 L117 173 L113 197 L87 197 Z" fill="${skin}" ${st}/>
-    <!-- benen: dij + onderbeen -->
-    <rect x="82" y="195" width="17" height="64" rx="9" fill="${c("legs")}" ${st}/>
-    <rect x="101" y="195" width="17" height="64" rx="9" fill="${c("legs")}" ${st}/>
-    <rect x="84" y="261" width="14" height="58" rx="7" fill="${c("legs")}" ${st}/>
-    <rect x="102" y="261" width="14" height="58" rx="7" fill="${c("legs")}" ${st}/>
-  </svg>`;
+  const st = `stroke="var(--separator)" stroke-width="0.8"`;
+
+  // Voorkant, gecentreerd op x=90
+  const front = `
+    <ellipse cx="90" cy="30" rx="15" ry="17" fill="${skin}" ${st}/>
+    <rect x="82" y="45" width="16" height="10" rx="4" fill="${skin}" ${st}/>
+    <rect x="39" y="116" width="13" height="48" rx="6" fill="${skin}" ${st}/>
+    <rect x="128" y="116" width="13" height="48" rx="6" fill="${skin}" ${st}/>
+    <circle cx="45" cy="170" r="6" fill="${skin}" ${st}/>
+    <circle cx="135" cy="170" r="6" fill="${skin}" ${st}/>
+    <path d="M73 148 L107 148 L104 175 L76 175 Z" fill="${skin}" ${st}/>
+    <rect x="74" y="256" width="14" height="60" rx="6" fill="${skin}" ${st}/>
+    <rect x="92" y="256" width="14" height="60" rx="6" fill="${skin}" ${st}/>
+    <path d="M73 316 L88 316 L90 330 L71 330 Z" fill="${skin}" ${st}/>
+    <path d="M92 316 L107 316 L109 330 L90 330 Z" fill="${skin}" ${st}/>
+    <ellipse cx="57" cy="66" rx="15" ry="13" fill="${c("shoulders")}" ${st}/>
+    <ellipse cx="123" cy="66" rx="15" ry="13" fill="${c("shoulders")}" ${st}/>
+    <path d="M74 60 L89 60 L89 91 Q74 93 70 79 Q69 66 74 60 Z" fill="${c("chest")}" ${st}/>
+    <path d="M106 60 L91 60 L91 91 Q106 93 110 79 Q111 66 106 60 Z" fill="${c("chest")}" ${st}/>
+    <rect x="42" y="70" width="15" height="46" rx="7" fill="${c("biceps")}" ${st}/>
+    <rect x="123" y="70" width="15" height="46" rx="7" fill="${c("biceps")}" ${st}/>
+    <rect x="74" y="91" width="32" height="56" rx="7" fill="${c("abs")}" ${st}/>
+    <line x1="90" y1="95" x2="90" y2="143" stroke="var(--separator)" stroke-width="0.8"/>
+    <line x1="75" y1="110" x2="105" y2="110" stroke="var(--separator)" stroke-width="0.8"/>
+    <line x1="75" y1="126" x2="105" y2="126" stroke="var(--separator)" stroke-width="0.8"/>
+    <rect x="73" y="172" width="16" height="82" rx="8" fill="${c("quads")}" ${st}/>
+    <rect x="91" y="172" width="16" height="82" rx="8" fill="${c("quads")}" ${st}/>
+    <text x="90" y="346" class="bm-cap">Voorkant</text>`;
+
+  // Achterkant, gecentreerd op x=270
+  const back = `
+    <ellipse cx="270" cy="30" rx="15" ry="17" fill="${skin}" ${st}/>
+    <rect x="262" y="45" width="16" height="10" rx="4" fill="${skin}" ${st}/>
+    <rect x="219" y="116" width="13" height="48" rx="6" fill="${skin}" ${st}/>
+    <rect x="308" y="116" width="13" height="48" rx="6" fill="${skin}" ${st}/>
+    <circle cx="225" cy="170" r="6" fill="${skin}" ${st}/>
+    <circle cx="315" cy="170" r="6" fill="${skin}" ${st}/>
+    <rect x="258" y="114" width="24" height="34" rx="6" fill="${skin}" ${st}/>
+    <path d="M253 316 L268 316 L270 330 L251 330 Z" fill="${skin}" ${st}/>
+    <path d="M272 316 L287 316 L289 330 L270 330 Z" fill="${skin}" ${st}/>
+    <ellipse cx="237" cy="66" rx="15" ry="13" fill="${c("shoulders")}" ${st}/>
+    <ellipse cx="303" cy="66" rx="15" ry="13" fill="${c("shoulders")}" ${st}/>
+    <path d="M252 55 Q270 48 288 55 L283 77 Q270 71 257 77 Z" fill="${c("back")}" ${st}/>
+    <path d="M257 79 L283 79 L278 116 Q270 123 262 116 Z" fill="${c("back")}" ${st}/>
+    <rect x="222" y="70" width="15" height="46" rx="7" fill="${c("triceps")}" ${st}/>
+    <rect x="303" y="70" width="15" height="46" rx="7" fill="${c("triceps")}" ${st}/>
+    <ellipse cx="262" cy="160" rx="13" ry="14" fill="${c("glutes")}" ${st}/>
+    <ellipse cx="278" cy="160" rx="13" ry="14" fill="${c("glutes")}" ${st}/>
+    <rect x="253" y="176" width="16" height="80" rx="8" fill="${c("hamstrings")}" ${st}/>
+    <rect x="271" y="176" width="16" height="80" rx="8" fill="${c("hamstrings")}" ${st}/>
+    <rect x="255" y="258" width="14" height="58" rx="7" fill="${c("calves")}" ${st}/>
+    <rect x="273" y="258" width="14" height="58" rx="7" fill="${c("calves")}" ${st}/>
+    <text x="270" y="346" class="bm-cap">Achterkant</text>`;
+
+  return `<svg viewBox="0 0 360 354" class="bodymap" aria-hidden="true">${front}${back}</svg>`;
 }
 
 /* ===================== Navigatie ===================== */

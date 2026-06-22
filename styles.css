@@ -261,8 +261,9 @@ select { appearance: none; -webkit-appearance: none; }
 .mt { margin-top: 12px; }
 
 /* ===== Lichaam-figuur ===== */
-.bodymap { width: 160px; height: auto; display: block; margin: 2px auto 0; }
+.bodymap { width: 100%; max-width: 320px; height: auto; display: block; margin: 2px auto 0; }
 .bodymap rect, .bodymap ellipse, .bodymap path, .bodymap circle { transition: fill 0.3s ease; }
+.bm-cap { fill: var(--muted); font-size: 12px; text-anchor: middle; font-weight: 600; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 12px; }
 
 /* ===== Reorder + verwijder in spiergroepen ===== */
