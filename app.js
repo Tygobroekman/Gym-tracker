@@ -30,10 +30,8 @@ function load() {
     return structuredClone(DEFAULT_DB);
   }
 }
-// Vul ontbrekende velden aan voor oudere opgeslagen data.
 function migrate(d) {
   if (!Array.isArray(d.muscles) || !d.muscles.length) d.muscles = [...DEFAULT_MUSCLES];
-  // Neem spiergroepen die al op oefeningen staan mee in de lijst.
   (d.exercises || []).forEach((ex) => {
     if (ex.muscle && !d.muscles.includes(ex.muscle)) d.muscles.push(ex.muscle);
   });
@@ -47,7 +45,15 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const num = (v) => (v === "" || v == null ? null : Number(v));
+// Accepteer zowel komma als punt als decimaalteken.
+const num = (v) => {
+  if (v == null) return null;
+  const s = String(v).trim().replace(",", ".");
+  if (s === "") return null;
+  const n = Number(s);
+  return isNaN(n) ? null : n;
+};
+const fmtNum = (v) => (v == null ? "–" : Number(v).toLocaleString("nl-NL", { maximumFractionDigits: 2 }));
 const fmtDate = (iso) => new Date(iso).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" });
 const fmtShort = (iso) => new Date(iso).toLocaleDateString("nl-NL", { day: "numeric", month: "short" });
 const fmtDay = (iso) => new Date(iso).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long" });
@@ -62,7 +68,7 @@ function toast(msg) {
   setTimeout(() => t.remove(), 1600);
 }
 
-// Duur: korte vorm voor live timer (m:ss / h:mm:ss) en lange voor historie ("48 min").
+// Duur-formattering.
 function fmtTimer(sec) {
   sec = Math.max(0, Math.floor(sec));
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -89,8 +95,13 @@ function startSessionTimer() {
   timerInterval = setInterval(tick, 1000);
 }
 
-function entryVolume(entry) {
-  return entry.sets.reduce((a, st) => a + (st.weight || 0) * (st.reps || 0), 0);
+function entryVolume(entry) { return entry.sets.reduce((a, st) => a + (st.weight || 0) * (st.reps || 0), 0); }
+function sessionVolume(s) { return s.entries.reduce((v, e) => v + entryVolume(e), 0); }
+function sessionsThisWeek() {
+  const now = new Date();
+  const day = (now.getDay() + 6) % 7;
+  const monday = new Date(now); monday.setHours(0, 0, 0, 0); monday.setDate(now.getDate() - day);
+  return db.sessions.filter((s) => new Date(s.finishedAt || s.date) >= monday).length;
 }
 
 // Reeks van prestaties van één oefening over afgeronde sessies.
@@ -103,7 +114,7 @@ function exerciseSeries(exId) {
     if (!sets.length) return;
     const maxW = Math.max(...sets.map((st) => st.weight || 0));
     const vol = sets.reduce((a, st) => a + (st.weight || 0) * (st.reps || 0), 0);
-    out.push({ date: s.finishedAt || s.date, maxW, vol, sets, sessionName: s.name });
+    out.push({ date: s.finishedAt || s.date, maxW, vol, sets });
   });
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -115,7 +126,27 @@ function lastPerformance(exId) {
   return { date: last.date, set: best, sets: last.sets };
 }
 
-/* ===================== Iconen (SF-stijl) ===================== */
+// Spiergroepen in de door de gebruiker bepaalde volgorde; onbekende/lege groepen achteraan.
+function orderedMuscleKeys(presentKeys) {
+  const keys = [];
+  db.muscles.forEach((m) => { if (presentKeys.includes(m)) keys.push(m); });
+  presentKeys.forEach((k) => { if (!keys.includes(k)) keys.push(k); });
+  return keys;
+}
+
+// Map een spiergroep-naam naar een regio op het lichaam-figuur.
+function muscleToRegion(name) {
+  const n = (name || "").toLowerCase();
+  if (/borst|chest|pec/.test(n)) return "chest";
+  if (/schouder|delt|shoulder/.test(n)) return "shoulders";
+  if (/arm|bicep|tricep|forearm/.test(n)) return "arms";
+  if (/core|buik|abs|ab|romp/.test(n)) return "abs";
+  if (/be+n|leg|quad|bil|ham|glut|kuit|calf|dij/.test(n)) return "legs";
+  if (/rug|back|lat|trap/.test(n)) return "back";
+  return null;
+}
+
+/* ===================== Iconen ===================== */
 const ICON = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h3v-6h6v6h3a1 1 0 0 0 1-1V9.5"/></svg>',
   dumbbell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 7v10M3.5 9v6M17.5 7v10M20.5 9v6M6.5 12h11"/></svg>',
@@ -124,11 +155,48 @@ const ICON = {
   chevron: '<svg class="chevron" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l6 6-6 6"/></svg>',
   back: '<svg viewBox="0 0 12 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 1L2 10l8 9"/></svg>',
   plus: '<svg class="plus-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
-  add: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
+  add: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  up: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l5-5 5 5"/></svg>',
+  down: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l5 5 5-5"/></svg>'
 };
-// Knop rechtsboven in de header: ofwel een ronde glas-icoonknop, ofwel een tekstlink.
 function iconBtn(act, id = "") { return `<button class="icon-btn" data-act="${act}"${id ? ` data-id="${id}"` : ""}>${ICON.add}</button>`; }
 function textAction(act, label, id = "") { return `<button class="title-action" data-act="${act}"${id ? ` data-id="${id}"` : ""}>${label}</button>`; }
+
+/* ===================== Lichaam-figuur (getrainde spieren) ===================== */
+function bodyMapSVG(trained) {
+  const c = (r) => (trained.has(r) ? "var(--accent)" : "var(--bodymap-off)");
+  const skin = "var(--bodymap-skin)";
+  const st = `stroke="var(--separator)" stroke-width="1"`;
+  return `<svg viewBox="0 0 200 330" class="bodymap" aria-hidden="true">
+    <circle cx="100" cy="30" r="18" fill="${skin}" ${st}/>
+    <rect x="91" y="44" width="18" height="14" rx="5" fill="${skin}" ${st}/>
+    <!-- traps / rug (bovenrug) -->
+    <path d="M80 56 Q100 48 120 56 L114 74 Q100 67 86 74 Z" fill="${c("back")}" ${st}/>
+    <!-- schouders -->
+    <ellipse cx="63" cy="80" rx="18" ry="15" fill="${c("shoulders")}" ${st}/>
+    <ellipse cx="137" cy="80" rx="18" ry="15" fill="${c("shoulders")}" ${st}/>
+    <!-- borst -->
+    <rect x="76" y="80" width="23" height="27" rx="11" fill="${c("chest")}" ${st}/>
+    <rect x="101" y="80" width="23" height="27" rx="11" fill="${c("chest")}" ${st}/>
+    <!-- armen: bovenarm + onderarm -->
+    <rect x="44" y="94" width="16" height="44" rx="8" fill="${c("arms")}" ${st}/>
+    <rect x="140" y="94" width="16" height="44" rx="8" fill="${c("arms")}" ${st}/>
+    <rect x="40" y="140" width="14" height="40" rx="7" fill="${c("arms")}" ${st}/>
+    <rect x="146" y="140" width="14" height="40" rx="7" fill="${c("arms")}" ${st}/>
+    <!-- lats (zijkant rug) -->
+    <path d="M74 112 L84 116 L84 150 L72 142 Z" fill="${c("back")}" ${st}/>
+    <path d="M126 112 L116 116 L116 150 L128 142 Z" fill="${c("back")}" ${st}/>
+    <!-- core / buik -->
+    <rect x="84" y="110" width="32" height="64" rx="11" fill="${c("abs")}" ${st}/>
+    <!-- bekken -->
+    <path d="M83 173 L117 173 L113 197 L87 197 Z" fill="${skin}" ${st}/>
+    <!-- benen: dij + onderbeen -->
+    <rect x="82" y="195" width="17" height="64" rx="9" fill="${c("legs")}" ${st}/>
+    <rect x="101" y="195" width="17" height="64" rx="9" fill="${c("legs")}" ${st}/>
+    <rect x="84" y="261" width="14" height="58" rx="7" fill="${c("legs")}" ${st}/>
+    <rect x="102" y="261" width="14" height="58" rx="7" fill="${c("legs")}" ${st}/>
+  </svg>`;
+}
 
 /* ===================== Navigatie ===================== */
 const TABS = [
@@ -165,6 +233,7 @@ function render() {
   $("#hdr-right").innerHTML = "";
   renderTabbar();
   window.scrollTo(0, 0);
+  if (typeof headerEl !== "undefined" && headerEl) headerEl.classList.remove("scrolled");
 
   if (v === "home") renderHome();
   else if (v === "session") renderSession();
@@ -180,7 +249,6 @@ function renderHome() {
   const root = $("#view");
   let html = "";
 
-  // Actieve sessie
   if (db.activeSession) {
     const n = db.activeSession.entries.length;
     html += `<div class="group-label">Actief</div>
@@ -190,34 +258,31 @@ function renderHome() {
         ${ICON.chevron}</div></div>`;
   }
 
-  // Laatste sessie
   const last = db.sessions[db.sessions.length - 1];
   html += `<div class="group-label">Laatste sessie</div>`;
   if (last) {
     const totalSets = last.entries.reduce((n, e) => n + e.sets.filter((x) => x.weight != null || x.reps != null).length, 0);
-    const vol = sessionVolume(last);
     html += `<div class="group"><div class="row" data-session="${last.id}">
       <div class="r-main"><div class="r-title">${esc(last.name)}</div>
-      <div class="r-sub">${fmtDate(last.finishedAt || last.date)} • ${totalSets} sets · ${Math.round(vol)} kg${last.durationSec ? " · " + fmtMinutes(last.durationSec) : ""}</div></div>
+      <div class="r-sub">${fmtDate(last.finishedAt || last.date)} • ${totalSets} sets · ${Math.round(sessionVolume(last))} kg${last.durationSec ? " · " + fmtMinutes(last.durationSec) : ""}</div></div>
       ${ICON.chevron}</div></div>`;
   } else {
     html += `<div class="group"><div class="row"><div class="r-main muted">Nog geen sessies</div></div></div>`;
   }
 
-  // Lichaam
   const bodyData = db.body.slice().sort((a, b) => a.date.localeCompare(b.date));
   html += `<div class="group-label">Lichaam</div>`;
   if (bodyData.length) {
     const latest = bodyData[bodyData.length - 1];
     const prev = bodyData.length > 1 ? bodyData[bodyData.length - 2] : null;
-    const cells = BODY_FIELDS.filter((f) => latest[f.key] != null).slice(0, 3).map((f) => {
+    const cells = BODY_FIELDS.filter((f) => f.primary).map((f) => {
       const v = latest[f.key];
       let d = "";
-      if (prev && prev[f.key] != null) {
-        const diff = +(v - prev[f.key]).toFixed(1);
-        if (diff !== 0) d = `<span class="${diff > 0 ? "delta-up" : "delta-down"}"> ${diff > 0 ? "▲" : "▼"}${Math.abs(diff)}</span>`;
+      if (prev && prev[f.key] != null && v != null) {
+        const diff = +(v - prev[f.key]).toFixed(2);
+        if (diff !== 0) d = `<span class="${diff > 0 ? "delta-up" : "delta-down"}"> ${diff > 0 ? "▲" : "▼"}${fmtNum(Math.abs(diff))}</span>`;
       }
-      return `<div class="stat"><div class="val">${v}<span class="u"> ${f.unit}</span></div><div class="lbl">${f.label}${d}</div></div>`;
+      return `<div class="stat"><div class="val">${fmtNum(v)}<span class="u"> ${f.unit}</span></div><div class="lbl">${f.label}${d}</div></div>`;
     }).join("");
     html += `<div class="card" data-tab-go="body" style="cursor:pointer">
       <div class="stat-grid">${cells}</div>
@@ -226,16 +291,13 @@ function renderHome() {
     html += `<div class="group"><div class="row" data-tab-go="body"><div class="r-main muted">Nog geen metingen</div>${ICON.chevron}</div></div>`;
   }
 
-  // Stats deze week
-  const weekCount = sessionsThisWeek();
   html += `<div class="group-label">Overzicht</div>
     <div class="stat-grid" style="margin-bottom:8px">
       <div class="stat"><div class="val">${db.sessions.length}</div><div class="lbl">Sessies</div></div>
-      <div class="stat"><div class="val">${weekCount}</div><div class="lbl">Deze week</div></div>
+      <div class="stat"><div class="val">${sessionsThisWeek()}</div><div class="lbl">Deze week</div></div>
       <div class="stat"><div class="val">${db.exercises.length}</div><div class="lbl">Oefeningen</div></div>
     </div>`;
 
-  // Snelkoppelingen
   html += `<div class="group-label">Meer</div><div class="group">
     <div class="row" data-go="history"><div class="r-main"><div class="r-title">Alle sessies</div></div>${ICON.chevron}</div>
     <div class="row" data-go="muscles"><div class="r-main"><div class="r-title">Spiergroepen beheren</div></div>${ICON.chevron}</div>
@@ -245,18 +307,7 @@ function renderHome() {
   html += db.activeSession
     ? `<button class="btn-primary" data-tab-go="session">Ga verder met sessie</button>`
     : `<button class="btn-primary" data-act="start-session">Nieuwe sessie starten</button>`;
-
   root.innerHTML = html;
-}
-
-function sessionVolume(s) {
-  return s.entries.reduce((v, e) => v + e.sets.reduce((sv, x) => sv + (x.weight || 0) * (x.reps || 0), 0), 0);
-}
-function sessionsThisWeek() {
-  const now = new Date();
-  const day = (now.getDay() + 6) % 7; // maandag = 0
-  const monday = new Date(now); monday.setHours(0, 0, 0, 0); monday.setDate(now.getDate() - day);
-  return db.sessions.filter((s) => new Date(s.finishedAt || s.date) >= monday).length;
 }
 
 /* ===================== Sessie ===================== */
@@ -282,34 +333,61 @@ function renderSession() {
       <div class="t-vol"><div class="v"><span id="session-volume">${Math.round(sessionVolume(s))}</span> kg</div><div class="t-lbl">totaal getild</div></div>
     </div>`;
 
+  // Getrainde spieren
+  const trained = sessionTrainedRegions(s);
+  const names = [...new Set(s.entries.map((e) => (exerciseById(e.exerciseId) || {}).muscle).filter(Boolean))];
+  body += `<div class="card"><div class="card-head"><h3 style="font-size:17px">Getrainde spieren</h3></div>
+    ${s.entries.length
+      ? bodyMapSVG(trained) + (names.length ? `<div class="chips">${names.map((n) => `<span class="pill">${esc(n)}</span>`).join("")}</div>` : "")
+      : `<p class="muted small center" style="padding:14px 0">Voeg oefeningen toe om te zien welke spieren je traint.</p>`}
+  </div>`;
+
+  // Oefeningen gegroepeerd op spiergroep (echte index behouden)
+  const buckets = {};
   s.entries.forEach((entry, ei) => {
     const ex = exerciseById(entry.exerciseId);
-    const last = lastPerformance(entry.exerciseId);
-    body += `<div class="card">
-      <div class="card-head">
-        <div><h3 style="font-size:18px">${esc(ex ? ex.name : "Onbekend")}</h3>
-        ${ex && ex.muscle ? `<span class="pill" style="margin-top:6px;display:inline-block">${esc(ex.muscle)}</span>` : ""}</div>
-        <button class="btn-link" style="color:var(--red)" data-act="remove-entry" data-ei="${ei}">Verwijder</button>
-      </div>
-      ${last ? `<p class="muted small" style="margin:-4px 0 10px">Vorige keer: ${last.set.weight ?? "–"} kg × ${last.set.reps ?? "–"} (${fmtShort(last.date)})</p>` : ""}
-      <div class="set-head"><span></span><span style="text-align:center">Kg</span><span style="text-align:center">Reps</span><span></span></div>`;
-
-    entry.sets.forEach((set, si) => {
-      const ph = last && last.sets[si] ? last.sets[si] : {};
-      body += `<div class="set-row">
-        <span class="setnum">${si + 1}</span>
-        <input type="number" inputmode="decimal" placeholder="${ph.weight ?? ""}" value="${set.weight ?? ""}" data-field="weight" data-ei="${ei}" data-si="${si}" />
-        <input type="number" inputmode="numeric" placeholder="${ph.reps ?? ""}" value="${set.reps ?? ""}" data-field="reps" data-ei="${ei}" data-si="${si}" />
-        <button class="del" data-act="remove-set" data-ei="${ei}" data-si="${si}">✕</button>
-      </div>`;
+    const key = ex && ex.muscle ? ex.muscle : "Overig";
+    (buckets[key] = buckets[key] || []).push({ entry, ei });
+  });
+  orderedMuscleKeys(Object.keys(buckets)).forEach((key) => {
+    body += `<div class="group-label">${esc(key)}</div>`;
+    buckets[key].forEach(({ entry, ei }) => {
+      const ex = exerciseById(entry.exerciseId);
+      const last = lastPerformance(entry.exerciseId);
+      body += `<div class="card">
+        <div class="card-head">
+          <h3 style="font-size:18px">${esc(ex ? ex.name : "Onbekend")}</h3>
+          <button class="btn-link" style="color:var(--red)" data-act="remove-entry" data-ei="${ei}">Verwijder</button>
+        </div>
+        ${last ? `<p class="muted small" style="margin:-4px 0 10px">Vorige keer: ${last.set.weight ?? "–"} kg × ${last.set.reps ?? "–"} (${fmtShort(last.date)})</p>` : ""}
+        <div class="set-head"><span></span><span style="text-align:center">Kg</span><span style="text-align:center">Reps</span><span></span></div>`;
+      entry.sets.forEach((set, si) => {
+        const ph = last && last.sets[si] ? last.sets[si] : {};
+        body += `<div class="set-row">
+          <span class="setnum">${si + 1}</span>
+          <input type="number" inputmode="decimal" placeholder="${ph.weight ?? ""}" value="${set.weight ?? ""}" data-field="weight" data-ei="${ei}" data-si="${si}" />
+          <input type="number" inputmode="numeric" placeholder="${ph.reps ?? ""}" value="${set.reps ?? ""}" data-field="reps" data-ei="${ei}" data-si="${si}" />
+          <button class="del" data-act="remove-set" data-ei="${ei}" data-si="${si}">✕</button>
+        </div>`;
+      });
+      body += `<button class="btn-link" data-act="add-set" data-ei="${ei}">+ Set toevoegen</button>
+        <div class="vol-line">Volume: <b id="vol-${ei}">${Math.round(entryVolume(entry))}</b> kg</div></div>`;
     });
-    body += `<button class="btn-link" data-act="add-set" data-ei="${ei}">+ Set toevoegen</button>
-      <div class="vol-line">Volume: <b id="vol-${ei}">${Math.round(entryVolume(entry))}</b> kg</div></div>`;
   });
 
-  body += `<button class="btn-add-cell mt" data-act="pick-exercise">${ICON.plus} Oefening toevoegen</button>`;
+  body += `<button class="btn-add-cell mt" data-act="pick-exercise">${ICON.plus} Oefening toevoegen</button>
+    <button class="btn-destructive mt" data-act="discard-session">Stoppen zonder opslaan</button>`;
   root.innerHTML = body;
   startSessionTimer();
+}
+
+function sessionTrainedRegions(s) {
+  const set = new Set();
+  s.entries.forEach((e) => {
+    const ex = exerciseById(e.exerciseId);
+    if (ex) { const r = muscleToRegion(ex.muscle); if (r) set.add(r); }
+  });
+  return set;
 }
 
 function startSession() {
@@ -333,6 +411,12 @@ function finishSession() {
   db.sessions.push(s); db.activeSession = null; save();
   toast("Sessie opgeslagen 💪"); setTab("home");
 }
+function discardSession() {
+  if (!db.activeSession) return;
+  if (confirm("Sessie afsluiten zonder op te slaan? De ingevoerde sets gaan verloren.")) {
+    db.activeSession = null; save(); setTab("home");
+  }
+}
 function addSet(ei) {
   const sets = db.activeSession.entries[ei].sets;
   const prev = sets[sets.length - 1];
@@ -350,7 +434,7 @@ function openPickExercise() {
   openModal(`<h2>Oefening toevoegen</h2>
     <input id="ex-search" placeholder="Zoeken…" data-act="filter-pick" />
     <div class="group mt" id="pick-list">${items || `<div class="row muted">Nog geen oefeningen.</div>`}</div>
-    <button class="btn-tinted mt" data-act="new-exercise">+ Nieuwe oefening aanmaken</button>`);
+    <button class="btn-tinted mt" data-act="new-exercise-session">+ Nieuwe oefening aanmaken</button>`);
 }
 function addEntry(exId) {
   db.activeSession.entries.push({ exerciseId: exId, sets: [{ weight: null, reps: null }] });
@@ -369,7 +453,7 @@ function renderLibrary() {
   const groups = {};
   db.exercises.forEach((ex) => { const g = ex.muscle || "Overig"; (groups[g] = groups[g] || []).push(ex); });
   let html = "";
-  Object.keys(groups).sort().forEach((g) => {
+  orderedMuscleKeys(Object.keys(groups)).forEach((g) => {
     html += `<div class="group-label">${esc(g)}</div><div class="group">`;
     groups[g].sort((a, b) => a.name.localeCompare(b.name)).forEach((ex) => {
       const lp = lastPerformance(ex.id);
@@ -396,13 +480,12 @@ function renderExerciseDetail(exId) {
     <p class="muted" style="margin:6px 0 0">${esc(ex.muscle || "—")}</p>
     ${ex.notes ? `<p style="margin:8px 0 0">${esc(ex.notes)}</p>` : ""}</div>`;
 
-  // Totalen: beste set, totaal getild gewicht (volume), aantal sessies.
   if (series.length) {
     const totalVol = series.reduce((a, s) => a + s.vol, 0);
     let bestW = 0, bestReps = 0;
     series.forEach((s) => s.sets.forEach((st) => { if ((st.weight || 0) > bestW) { bestW = st.weight || 0; bestReps = st.reps || 0; } }));
     html += `<div class="stat-grid" style="margin-bottom:14px">
-      <div class="stat"><div class="val">${bestW}<span class="u"> kg</span></div><div class="lbl">Beste set ×${bestReps}</div></div>
+      <div class="stat"><div class="val">${fmtNum(bestW)}<span class="u"> kg</span></div><div class="lbl">Beste set ×${bestReps}</div></div>
       <div class="stat"><div class="val">${Math.round(totalVol).toLocaleString("nl-NL")}<span class="u"> kg</span></div><div class="lbl">Totaal getild</div></div>
       <div class="stat"><div class="val">${series.length}</div><div class="lbl">Sessies</div></div>
     </div>`;
@@ -412,24 +495,21 @@ function renderExerciseDetail(exId) {
     html += `<div class="card"><div class="empty" style="padding:30px 0">
       <span class="big">📈</span><p>${series.length ? "Nog maar 1 sessie — log nog een keer voor een grafiek." : "Nog geen data. Log deze oefening in een sessie."}</p></div></div>`;
   } else {
-    const key = exMetric;
-    const unit = key === "maxW" ? "kg" : "kg vol.";
+    const key = exMetric, unit = key === "maxW" ? "kg" : "kg vol.";
     const pts = series.map((s) => ({ x: new Date(s.date).getTime(), y: key === "maxW" ? s.maxW : s.vol }));
-    const first = pts[0].y, lastv = pts[pts.length - 1].y;
-    const diff = +(lastv - first).toFixed(1);
+    const lastv = pts[pts.length - 1].y, diff = +(lastv - pts[0].y).toFixed(1);
     html += `<div class="card">
       <div class="segmented">
         <button data-metric="maxW" class="${key === "maxW" ? "active" : ""}">Max gewicht</button>
         <button data-metric="vol" class="${key === "vol" ? "active" : ""}">Volume</button>
       </div>
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
-        <span style="font-size:26px;font-weight:700">${lastv} <span class="muted" style="font-size:15px;font-weight:400">${unit}</span></span>
-        <span class="${diff >= 0 ? "delta-up" : "delta-down"}" style="font-size:14px">${diff >= 0 ? "▲" : "▼"} ${Math.abs(diff)} sinds start</span>
+        <span style="font-size:26px;font-weight:700">${fmtNum(lastv)} <span class="muted" style="font-size:15px;font-weight:400">${unit}</span></span>
+        <span class="${diff >= 0 ? "delta-up" : "delta-down"}" style="font-size:14px">${diff >= 0 ? "▲" : "▼"} ${fmtNum(Math.abs(diff))} sinds start</span>
       </div>
       ${lineChart(pts)}</div>`;
   }
 
-  // Sessie-historie van deze oefening
   if (series.length) {
     html += `<div class="group-label">Geschiedenis</div><div class="group">`;
     series.slice().reverse().forEach((s) => {
@@ -444,6 +524,7 @@ function renderExerciseDetail(exId) {
 }
 
 /* ===================== Oefening formulier ===================== */
+let pendingSessionAdd = false;
 function openExerciseForm(exId) {
   const ex = exId ? exerciseById(exId) : null;
   const opts = db.muscles.map((m) => `<option value="${esc(m)}" ${ex && ex.muscle === m ? "selected" : ""}>${esc(m)}</option>`).join("");
@@ -460,8 +541,15 @@ function saveExercise(exId) {
   if (!name) { toast("Naam is verplicht"); return; }
   const muscle = $("#f-muscle").value.trim();
   const notes = $("#f-notes").value.trim();
-  if (exId) Object.assign(exerciseById(exId), { name, muscle, notes });
-  else db.exercises.push({ id: uid("ex"), name, muscle, notes });
+  if (exId) { Object.assign(exerciseById(exId), { name, muscle, notes }); save(); closeModal(); render(); return; }
+  const ex = { id: uid("ex"), name, muscle, notes };
+  db.exercises.push(ex);
+  // Tijdens een sessie aangemaakt → meteen toevoegen en klaarzetten om in te vullen.
+  if (pendingSessionAdd && db.activeSession) {
+    pendingSessionAdd = false;
+    db.activeSession.entries.push({ exerciseId: ex.id, sets: [{ weight: null, reps: null }] });
+    save(); closeModal(); setTab("session"); toast("Toegevoegd aan sessie"); return;
+  }
   save(); closeModal(); render();
 }
 
@@ -469,16 +557,20 @@ function saveExercise(exId) {
 function renderMuscles() {
   $("#hdr-right").innerHTML = iconBtn("add-muscle");
   const root = $("#view");
-  let html = `<div class="group-label">Spiergroepen</div><div class="group">`;
+  let html = `<div class="group-label">Volgorde van spiergroepen</div><div class="group">`;
   if (!db.muscles.length) html += `<div class="row muted">Geen spiergroepen.</div>`;
   db.muscles.forEach((m, i) => {
     const count = db.exercises.filter((e) => e.muscle === m).length;
     html += `<div class="row">
       <div class="r-main" data-act="rename-muscle" data-i="${i}"><div class="r-title">${esc(m)}</div>
       <div class="r-sub">${count} oefening${count === 1 ? "" : "en"}</div></div>
-      <button class="btn-link" style="color:var(--red)" data-act="delete-muscle" data-i="${i}">Verwijder</button></div>`;
+      <div class="reorder">
+        <button class="mv" data-act="muscle-up" data-i="${i}"${i === 0 ? " disabled" : ""}>${ICON.up}</button>
+        <button class="mv" data-act="muscle-down" data-i="${i}"${i === db.muscles.length - 1 ? " disabled" : ""}>${ICON.down}</button>
+      </div>
+      <button class="del-x" data-act="delete-muscle" data-i="${i}">✕</button></div>`;
   });
-  html += `</div><p class="muted small" style="margin:10px 8px">Tik op een naam om te hernoemen. Bestaande oefeningen worden mee aangepast.</p>`;
+  html += `</div><p class="muted small" style="margin:10px 8px">Tik op een naam om te hernoemen. De volgorde bepaalt ook hoe oefeningen en sessies gegroepeerd worden.</p>`;
   root.innerHTML = html;
 }
 function addMuscle() {
@@ -506,13 +598,20 @@ function deleteMuscle(i) {
     db.muscles.splice(i, 1); save(); renderMuscles();
   }
 }
+function moveMuscle(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= db.muscles.length) return;
+  [db.muscles[i], db.muscles[j]] = [db.muscles[j], db.muscles[i]];
+  save(); renderMuscles();
+}
 
 /* ===================== Lichaam ===================== */
 const BODY_FIELDS = [
-  { key: "weight", label: "Gewicht", unit: "kg" },
-  { key: "bodyFat", label: "Vet%", unit: "%" },
-  { key: "chest", label: "Borst", unit: "cm" },
+  { key: "weight", label: "Gewicht", unit: "kg", primary: true },
+  { key: "bodyFat", label: "Vet", unit: "%", primary: true },
+  { key: "muscle", label: "Spier", unit: "kg", primary: true },
   { key: "waist", label: "Taille", unit: "cm" },
+  { key: "chest", label: "Borst", unit: "cm" },
   { key: "arm", label: "Arm", unit: "cm" },
   { key: "thigh", label: "Been", unit: "cm" }
 ];
@@ -530,29 +629,29 @@ function renderBody() {
   const latest = data[data.length - 1];
   const prev = data.length > 1 ? data[data.length - 2] : null;
 
-  let html = `<div class="group-label">Laatste meting · ${fmtDate(latest.date)}</div><div class="card"><div class="stat-grid">`;
-  BODY_FIELDS.forEach((f) => {
-    if (latest[f.key] == null) return;
+  const present = BODY_FIELDS.filter((f) => latest[f.key] != null);
+  let cellsHtml = present.map((f) => {
     let d = "";
     if (prev && prev[f.key] != null) {
-      const diff = +(latest[f.key] - prev[f.key]).toFixed(1);
-      if (diff !== 0) d = `<span class="${diff > 0 ? "delta-up" : "delta-down"}"> ${diff > 0 ? "▲" : "▼"}${Math.abs(diff)}</span>`;
+      const diff = +(latest[f.key] - prev[f.key]).toFixed(2);
+      if (diff !== 0) d = `<span class="${diff > 0 ? "delta-up" : "delta-down"}"> ${diff > 0 ? "▲" : "▼"}${fmtNum(Math.abs(diff))}</span>`;
     }
-    html += `<div class="stat"><div class="val">${latest[f.key]}<span class="u"> ${f.unit}</span></div><div class="lbl">${f.label}${d}</div></div>`;
-  });
-  html += `</div></div>`;
+    return `<div class="stat"><div class="val">${fmtNum(latest[f.key])}<span class="u"> ${f.unit}</span></div><div class="lbl">${f.label}${d}</div></div>`;
+  }).join("");
+  // Vul de laatste rij aan zodat er geen leeg grijs vak overblijft.
+  const filler = (3 - (present.length % 3)) % 3;
+  for (let k = 0; k < filler; k++) cellsHtml += `<div class="stat"></div>`;
+  let html = `<div class="group-label">Laatste meting · ${fmtDate(latest.date)}</div><div class="card"><div class="stat-grid">${cellsHtml}</div></div>`;
 
-  // Grafiek
   const selector = BODY_FIELDS.map((f) => `<option value="${f.key}" ${f.key === bodyMetricKey ? "selected" : ""}>${f.label}</option>`).join("");
   const pts = data.filter((d) => d[bodyMetricKey] != null).map((d) => ({ x: new Date(d.date).getTime(), y: d[bodyMetricKey] }));
   html += `<div class="card"><div class="card-head"><h3 style="font-size:17px">Verloop</h3>
     <div class="select-wrap" style="width:auto"><select style="width:auto;padding-right:34px" data-act="change-metric">${selector}</select></div></div>
     ${pts.length >= 2 ? lineChart(pts) : `<p class="muted small center" style="padding:24px 0">Minstens 2 metingen nodig.</p>`}</div>`;
 
-  // Alle metingen
   html += `<div class="group-label">Alle metingen</div><div class="group">`;
   data.slice().reverse().forEach((m) => {
-    const parts = BODY_FIELDS.filter((f) => m[f.key] != null).map((f) => `${f.label} ${m[f.key]}${f.unit}`);
+    const parts = BODY_FIELDS.filter((f) => m[f.key] != null).map((f) => `${f.label} ${fmtNum(m[f.key])}${f.unit}`);
     html += `<div class="row" data-act="edit-body" data-id="${m.id}"><div class="r-main"><div class="r-title">${fmtDate(m.date)}</div>
       <div class="r-sub">${parts.join(" · ") || "—"}</div></div>${ICON.chevron}</div>`;
   });
@@ -562,7 +661,7 @@ function renderBody() {
 function openBodyForm(id) {
   const m = id ? db.body.find((b) => b.id === id) : null;
   const fields = BODY_FIELDS.map((f) => `<div class="field" style="flex:1"><label>${f.label} (${f.unit})</label>
-    <input type="number" inputmode="decimal" id="b-${f.key}" value="${m && m[f.key] != null ? m[f.key] : ""}" placeholder="–" /></div>`);
+    <input type="number" inputmode="decimal" step="0.01" id="b-${f.key}" value="${m && m[f.key] != null ? m[f.key] : ""}" placeholder="–" /></div>`);
   let grid = "";
   for (let i = 0; i < fields.length; i += 2) grid += `<div class="row-inputs">${fields[i]}${fields[i + 1] || ""}</div>`;
   openModal(`<h2>${m ? "Meting bewerken" : "Nieuwe meting"}</h2>
@@ -629,15 +728,15 @@ function lineChart(pts) {
   const dots = pts.map((p) => `<circle class="chart-dot" cx="${sx(p.x).toFixed(1)}" cy="${sy(p.y).toFixed(1)}" r="3"/>`).join("");
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
     <path class="chart-fill" d="${fill}"/><path class="chart-line" d="${line}"/>${dots}
-    <text class="chart-lbl" x="3" y="${(sy(maxY) + 4).toFixed(1)}">${+maxY.toFixed(1)}</text>
-    <text class="chart-lbl" x="3" y="${(sy(minY) + 4).toFixed(1)}">${+minY.toFixed(1)}</text></svg>`;
+    <text class="chart-lbl" x="3" y="${(sy(maxY) + 4).toFixed(1)}">${fmtNum(maxY)}</text>
+    <text class="chart-lbl" x="3" y="${(sy(minY) + 4).toFixed(1)}">${fmtNum(minY)}</text></svg>`;
 }
 
 /* ===================== Modal ===================== */
 function openModal(inner) {
   $("#modal-root").innerHTML = `<div class="modal-overlay" data-act="overlay"><div class="modal"><div class="modal-grabber"></div>${inner}</div></div>`;
 }
-function closeModal() { $("#modal-root").innerHTML = ""; }
+function closeModal() { $("#modal-root").innerHTML = ""; pendingSessionAdd = false; }
 
 /* ===================== Events ===================== */
 document.addEventListener("click", (e) => {
@@ -647,7 +746,6 @@ document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-act], [data-go], [data-tab-go], [data-session]");
   if (!el) return;
 
-  // Navigatie-shortcuts
   if (el.dataset.tabGo) { setTab(el.dataset.tabGo); return; }
   if (el.dataset.go) { push(el.dataset.go, el.dataset.id); return; }
   if (el.dataset.session) { openSessionDetail(el.dataset.session); return; }
@@ -664,6 +762,7 @@ document.addEventListener("click", (e) => {
 
     case "start-session": startSession(); break;
     case "finish-session": finishSession(); break;
+    case "discard-session": discardSession(); break;
     case "pick-exercise": openPickExercise(); break;
     case "add-entry": addEntry(id); break;
     case "add-set": addSet(ei); break;
@@ -675,6 +774,7 @@ document.addEventListener("click", (e) => {
       if (confirm("Oefening uit sessie verwijderen?")) { db.activeSession.entries.splice(ei, 1); save(); renderSession(); } break;
 
     case "new-exercise": openExerciseForm(null); break;
+    case "new-exercise-session": pendingSessionAdd = true; openExerciseForm(null); break;
     case "edit-exercise": openExerciseForm(id); break;
     case "save-exercise": saveExercise(id); break;
     case "delete-exercise":
@@ -686,6 +786,8 @@ document.addEventListener("click", (e) => {
     case "add-muscle": addMuscle(); break;
     case "rename-muscle": renameMuscle(i); break;
     case "delete-muscle": deleteMuscle(i); break;
+    case "muscle-up": moveMuscle(i, -1); break;
+    case "muscle-down": moveMuscle(i, 1); break;
 
     case "log-body": openBodyForm(null); break;
     case "edit-body": openBodyForm(id); break;
@@ -696,7 +798,6 @@ document.addEventListener("click", (e) => {
       if (confirm("Sessie verwijderen?")) { db.sessions = db.sessions.filter((x) => x.id !== id); save(); closeModal(); render(); } break;
   }
 
-  // Segmented controls binnen detail
   const metricBtn = e.target.closest("[data-metric]");
   if (metricBtn) { exMetric = metricBtn.dataset.metric; renderExerciseDetail(cur().param); }
 });
@@ -720,7 +821,6 @@ document.addEventListener("input", (e) => {
 });
 
 /* ===================== Init ===================== */
-// Header krijgt een blur-balk zodra je scrolt (Apple Health-stijl).
 const headerEl = document.querySelector(".app-header");
 window.addEventListener("scroll", () => {
   headerEl.classList.toggle("scrolled", window.scrollY > 8);

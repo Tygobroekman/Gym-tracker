@@ -1,5 +1,5 @@
 // Service worker — "netwerk eerst": online altijd de nieuwste versie, offline uit cache.
-const CACHE = "gym-tracker-v5";
+const CACHE = "gym-tracker-v6";
 const ASSETS = [
   "./",
   "./index.html",

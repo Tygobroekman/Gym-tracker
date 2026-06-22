@@ -19,6 +19,8 @@
   --glass-border: rgba(255, 255, 255, 0.55);
   --glass-hi: rgba(255, 255, 255, 0.85);
   --glass-active: rgba(255, 255, 255, 0.82);
+  --bodymap-off: #c9c9ce;
+  --bodymap-skin: #b3b3bb;
   /* Ambient gloed bovenaan (Apple Health-stijl) */
   --hero: linear-gradient(180deg, rgba(0, 122, 255, 0.18) 0%, rgba(0, 122, 255, 0.05) 42%, rgba(0, 122, 255, 0) 100%);
   --radius: 12px;
@@ -45,6 +47,8 @@
     --glass-border: rgba(255, 255, 255, 0.14);
     --glass-hi: rgba(255, 255, 255, 0.16);
     --glass-active: rgba(120, 120, 128, 0.5);
+    --bodymap-off: #3a3a3c;
+    --bodymap-skin: #48484a;
     --hero: linear-gradient(180deg, rgba(10, 132, 255, 0.34) 0%, rgba(10, 132, 255, 0.10) 45%, rgba(10, 132, 255, 0) 100%);
   }
 }
@@ -255,3 +259,15 @@ select { appearance: none; -webkit-appearance: none; }
 
 .spacer { flex: 1; }
 .mt { margin-top: 12px; }
+
+/* ===== Lichaam-figuur ===== */
+.bodymap { width: 160px; height: auto; display: block; margin: 2px auto 0; }
+.bodymap rect, .bodymap ellipse, .bodymap path, .bodymap circle { transition: fill 0.3s ease; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 12px; }
+
+/* ===== Reorder + verwijder in spiergroepen ===== */
+.reorder { display: flex; gap: 4px; }
+.mv { background: var(--surface-2); color: var(--accent); border-radius: 8px; padding: 6px 9px; display: grid; place-items: center; }
+.mv:disabled { opacity: 0.35; color: var(--muted); }
+.mv svg { width: 16px; height: 16px; }
+.del-x { background: none; color: var(--red); padding: 6px 4px; font-size: 17px; }
