@@ -1,5 +1,5 @@
 // Service worker: app-shell caching zodat de app offline werkt.
-const CACHE = "gym-tracker-v2";
+const CACHE = "gym-tracker-v4";
 const ASSETS = [
   "./",
   "./index.html",

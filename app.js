@@ -62,6 +62,37 @@ function toast(msg) {
   setTimeout(() => t.remove(), 1600);
 }
 
+// Duur: korte vorm voor live timer (m:ss / h:mm:ss) en lange voor historie ("48 min").
+function fmtTimer(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+function fmtMinutes(sec) {
+  const m = Math.round(sec / 60);
+  if (m < 60) return m + " min";
+  return Math.floor(m / 60) + "u " + (m % 60) + "m";
+}
+
+// Live sessie-timer.
+let timerInterval = null;
+function clearTimer() { if (timerInterval) { clearInterval(timerInterval); timerInterval = null; } }
+function startSessionTimer() {
+  clearTimer();
+  const tick = () => {
+    const el = $("#session-timer");
+    if (!el || !db.activeSession) { clearTimer(); return; }
+    el.textContent = fmtTimer((Date.now() - Date.parse(db.activeSession.date)) / 1000);
+  };
+  tick();
+  timerInterval = setInterval(tick, 1000);
+}
+
+function entryVolume(entry) {
+  return entry.sets.reduce((a, st) => a + (st.weight || 0) * (st.reps || 0), 0);
+}
+
 // Reeks van prestaties van één oefening over afgeronde sessies.
 function exerciseSeries(exId) {
   const out = [];
@@ -92,8 +123,12 @@ const ICON = {
   body: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4.5" r="2"/><path d="M12 7v8M12 9l-5-1M12 9l5-1M12 15l-3 6M12 15l3 6"/></svg>',
   chevron: '<svg class="chevron" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1l6 6-6 6"/></svg>',
   back: '<svg viewBox="0 0 12 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 1L2 10l8 9"/></svg>',
-  plus: '<svg class="plus-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>'
+  plus: '<svg class="plus-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
+  add: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'
 };
+// Knop rechtsboven in de header: ofwel een ronde glas-icoonknop, ofwel een tekstlink.
+function iconBtn(act, id = "") { return `<button class="icon-btn" data-act="${act}"${id ? ` data-id="${id}"` : ""}>${ICON.add}</button>`; }
+function textAction(act, label, id = "") { return `<button class="title-action" data-act="${act}"${id ? ` data-id="${id}"` : ""}>${label}</button>`; }
 
 /* ===================== Navigatie ===================== */
 const TABS = [
@@ -115,16 +150,18 @@ function back() { if (navStack.length > 1) { navStack.pop(); closeModal(); rende
 
 function renderTabbar() {
   const rootTab = navStack[0].view;
-  $("#tabbar").innerHTML = TABS.map(
-    (t) => `<button class="tab ${t.view === rootTab ? "active" : ""}" data-tab="${t.view}">
-      ${ICON[t.icon]}<span>${t.label}</span></button>`
-  ).join("");
+  const idx = Math.max(0, TABS.findIndex((t) => t.view === rootTab));
+  $("#tabbar").innerHTML =
+    `<div class="tab-highlight" style="--idx:${idx}"></div>` +
+    TABS.map((t) => `<button class="tab ${t.view === rootTab ? "active" : ""}" data-tab="${t.view}">
+      ${ICON[t.icon]}<span>${t.label}</span></button>`).join("");
 }
 
 function render() {
+  clearTimer();
   const v = cur().view;
   $("#view-title").textContent = TITLES[v] || "";
-  $("#hdr-left").innerHTML = navStack.length > 1 ? `<button class="nav-back" data-act="back">${ICON.back}<span>Terug</span></button>` : "";
+  $("#hdr-back").innerHTML = navStack.length > 1 ? `<button class="nav-back" data-act="back">${ICON.back}<span>Terug</span></button>` : "";
   $("#hdr-right").innerHTML = "";
   renderTabbar();
   window.scrollTo(0, 0);
@@ -161,7 +198,7 @@ function renderHome() {
     const vol = sessionVolume(last);
     html += `<div class="group"><div class="row" data-session="${last.id}">
       <div class="r-main"><div class="r-title">${esc(last.name)}</div>
-      <div class="r-sub">${fmtDate(last.finishedAt || last.date)} • ${last.entries.length} oef · ${totalSets} sets · ${Math.round(vol)} kg</div></div>
+      <div class="r-sub">${fmtDate(last.finishedAt || last.date)} • ${totalSets} sets · ${Math.round(vol)} kg${last.durationSec ? " · " + fmtMinutes(last.durationSec) : ""}</div></div>
       ${ICON.chevron}</div></div>`;
   } else {
     html += `<div class="group"><div class="row"><div class="r-main muted">Nog geen sessies</div></div></div>`;
@@ -236,10 +273,14 @@ function renderSession() {
     return;
   }
 
-  $("#hdr-right").innerHTML = `<button class="nav-action bold" data-act="finish-session">Afronden</button>`;
+  $("#hdr-right").innerHTML = textAction("finish-session", "Afronden");
 
   let body = `<div class="field mt"><input id="session-name" value="${esc(s.name)}" data-act="rename-session" /></div>
-    <p class="muted small" style="margin:0 4px 10px">${fmtDay(s.date)}</p>`;
+    <p class="muted small" style="margin:0 4px 0">${fmtDay(s.date)}</p>
+    <div class="timer-card">
+      <div><div class="t-time" id="session-timer">0:00</div><div class="t-lbl">sessieduur</div></div>
+      <div class="t-vol"><div class="v"><span id="session-volume">${Math.round(sessionVolume(s))}</span> kg</div><div class="t-lbl">totaal getild</div></div>
+    </div>`;
 
   s.entries.forEach((entry, ei) => {
     const ex = exerciseById(entry.exerciseId);
@@ -262,11 +303,13 @@ function renderSession() {
         <button class="del" data-act="remove-set" data-ei="${ei}" data-si="${si}">✕</button>
       </div>`;
     });
-    body += `<button class="btn-link" data-act="add-set" data-ei="${ei}">+ Set toevoegen</button></div>`;
+    body += `<button class="btn-link" data-act="add-set" data-ei="${ei}">+ Set toevoegen</button>
+      <div class="vol-line">Volume: <b id="vol-${ei}">${Math.round(entryVolume(entry))}</b> kg</div></div>`;
   });
 
   body += `<button class="btn-add-cell mt" data-act="pick-exercise">${ICON.plus} Oefening toevoegen</button>`;
   root.innerHTML = body;
+  startSessionTimer();
 }
 
 function startSession() {
@@ -286,6 +329,7 @@ function finishSession() {
     db.activeSession = null; save(); setTab("home"); return;
   }
   s.finishedAt = todayISO();
+  s.durationSec = Math.round((Date.parse(s.finishedAt) - Date.parse(s.date)) / 1000);
   db.sessions.push(s); db.activeSession = null; save();
   toast("Sessie opgeslagen 💪"); setTab("home");
 }
@@ -315,7 +359,7 @@ function addEntry(exId) {
 
 /* ===================== Bibliotheek ===================== */
 function renderLibrary() {
-  $("#hdr-right").innerHTML = `<button class="nav-action" data-act="new-exercise">+</button>`;
+  $("#hdr-right").innerHTML = iconBtn("new-exercise");
   const root = $("#view");
   if (!db.exercises.length) {
     root.innerHTML = `<div class="empty"><span class="big">📚</span><p>Nog geen oefeningen</p></div>
@@ -344,13 +388,25 @@ let exMetric = "maxW";
 function renderExerciseDetail(exId) {
   const ex = exerciseById(exId);
   if (!ex) { back(); return; }
-  $("#hdr-right").innerHTML = `<button class="nav-action" data-act="edit-exercise" data-id="${ex.id}">Wijzig</button>`;
+  $("#hdr-right").innerHTML = textAction("edit-exercise", "Wijzig", ex.id);
   const root = $("#view");
   const series = exerciseSeries(exId);
 
   let html = `<div class="card mt"><h3>${esc(ex.name)}</h3>
     <p class="muted" style="margin:6px 0 0">${esc(ex.muscle || "—")}</p>
     ${ex.notes ? `<p style="margin:8px 0 0">${esc(ex.notes)}</p>` : ""}</div>`;
+
+  // Totalen: beste set, totaal getild gewicht (volume), aantal sessies.
+  if (series.length) {
+    const totalVol = series.reduce((a, s) => a + s.vol, 0);
+    let bestW = 0, bestReps = 0;
+    series.forEach((s) => s.sets.forEach((st) => { if ((st.weight || 0) > bestW) { bestW = st.weight || 0; bestReps = st.reps || 0; } }));
+    html += `<div class="stat-grid" style="margin-bottom:14px">
+      <div class="stat"><div class="val">${bestW}<span class="u"> kg</span></div><div class="lbl">Beste set ×${bestReps}</div></div>
+      <div class="stat"><div class="val">${Math.round(totalVol).toLocaleString("nl-NL")}<span class="u"> kg</span></div><div class="lbl">Totaal getild</div></div>
+      <div class="stat"><div class="val">${series.length}</div><div class="lbl">Sessies</div></div>
+    </div>`;
+  }
 
   if (series.length < 2) {
     html += `<div class="card"><div class="empty" style="padding:30px 0">
@@ -380,7 +436,7 @@ function renderExerciseDetail(exId) {
       const setsTxt = s.sets.map((x) => `${x.weight ?? "–"}×${x.reps ?? "–"}`).join(", ");
       html += `<div class="row"><div class="r-main"><div class="r-title">${fmtDate(s.date)}</div>
         <div class="r-sub">${esc(setsTxt)}</div></div>
-        <span class="r-value">${s.maxW} kg</span></div>`;
+        <span class="r-value">${Math.round(s.vol).toLocaleString("nl-NL")} kg</span></div>`;
     });
     html += `</div>`;
   }
@@ -411,7 +467,7 @@ function saveExercise(exId) {
 
 /* ===================== Spiergroepen beheren ===================== */
 function renderMuscles() {
-  $("#hdr-right").innerHTML = `<button class="nav-action" data-act="add-muscle">+</button>`;
+  $("#hdr-right").innerHTML = iconBtn("add-muscle");
   const root = $("#view");
   let html = `<div class="group-label">Spiergroepen</div><div class="group">`;
   if (!db.muscles.length) html += `<div class="row muted">Geen spiergroepen.</div>`;
@@ -463,7 +519,7 @@ const BODY_FIELDS = [
 let bodyMetricKey = "weight";
 
 function renderBody() {
-  $("#hdr-right").innerHTML = `<button class="nav-action" data-act="log-body">+</button>`;
+  $("#hdr-right").innerHTML = iconBtn("log-body");
   const root = $("#view");
   const data = db.body.slice().sort((a, b) => a.date.localeCompare(b.date));
   if (!data.length) {
@@ -536,7 +592,7 @@ function renderHistory() {
     const totalSets = s.entries.reduce((n, e) => n + e.sets.filter((x) => x.weight != null || x.reps != null).length, 0);
     const names = s.entries.map((e) => (exerciseById(e.exerciseId) || {}).name || "?").join(", ");
     html += `<div class="row" data-session="${s.id}"><div class="r-main"><div class="r-title">${esc(s.name)}</div>
-      <div class="r-sub">${fmtDate(s.finishedAt || s.date)} • ${totalSets} sets · ${Math.round(sessionVolume(s))} kg</div>
+      <div class="r-sub">${fmtDate(s.finishedAt || s.date)} • ${totalSets} sets · ${Math.round(sessionVolume(s))} kg${s.durationSec ? " · " + fmtMinutes(s.durationSec) : ""}</div>
       <div class="r-sub">${esc(names)}</div></div>${ICON.chevron}</div>`;
   });
   html += `</div>`;
@@ -545,7 +601,7 @@ function renderHistory() {
 function openSessionDetail(id) {
   const s = db.sessions.find((x) => x.id === id);
   if (!s) return;
-  let html = `<h2>${esc(s.name)}</h2><p class="muted small center" style="margin:-10px 0 14px">${fmtDay(s.finishedAt || s.date)}</p>`;
+  let html = `<h2>${esc(s.name)}</h2><p class="muted small center" style="margin:-10px 0 14px">${fmtDay(s.finishedAt || s.date)}${s.durationSec ? " · " + fmtMinutes(s.durationSec) : ""} · ${Math.round(sessionVolume(s))} kg getild</p>`;
   s.entries.forEach((e) => {
     const ex = exerciseById(e.exerciseId);
     html += `<div class="card"><h3 style="font-size:17px;margin:0 0 8px">${esc(ex ? ex.name : "?")}</h3>`;
@@ -648,7 +704,11 @@ document.addEventListener("click", (e) => {
 document.addEventListener("input", (e) => {
   const t = e.target;
   if (t.dataset.field && t.dataset.ei != null) {
-    db.activeSession.entries[+t.dataset.ei].sets[+t.dataset.si][t.dataset.field] = num(t.value); save();
+    const ei = +t.dataset.ei;
+    const entry = db.activeSession.entries[ei];
+    entry.sets[+t.dataset.si][t.dataset.field] = num(t.value); save();
+    const volEl = $("#vol-" + ei); if (volEl) volEl.textContent = Math.round(entryVolume(entry));
+    const totEl = $("#session-volume"); if (totEl) totEl.textContent = Math.round(sessionVolume(db.activeSession));
   } else if (t.dataset.act === "rename-session") {
     db.activeSession.name = t.value; save();
   } else if (t.dataset.act === "change-metric") {
@@ -660,6 +720,12 @@ document.addEventListener("input", (e) => {
 });
 
 /* ===================== Init ===================== */
+// Header krijgt een blur-balk zodra je scrolt (Apple Health-stijl).
+const headerEl = document.querySelector(".app-header");
+window.addEventListener("scroll", () => {
+  headerEl.classList.toggle("scrolled", window.scrollY > 8);
+}, { passive: true });
+
 render();
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW", e)));
